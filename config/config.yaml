@@ -1,0 +1,8 @@
+# Main configuration for nurse stress ML training
+chunk_size: 50000
+model_params:
+  n_estimators: 100
+  max_depth: 8
+  random_state: 42
+  class_weight: balanced
+model_output_path: "c:/Users/Michi/nurse-stress-wearables/data/model_rf.joblib"
