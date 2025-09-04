@@ -6,3 +6,21 @@ model_params:
   random_state: 42
   class_weight: balanced
 model_output_path: "c:/Users/Michi/nurse-stress-wearables/data/model_rf.joblib"
+results_dir: "c:/Users/Michi/nurse-stress-wearables/results"
+save_features: true
+feature_store_root: "c:/Users/Michi/nurse-stress-wearables/data/features"
+model_type: both  # rf | dl | both
+
+# Deep Learning (DL) options for raw-window training
+dl:
+  window_size: 60     # seconds/samples per window
+  stride: 30          # step between windows
+  batch_size: 256
+  epochs: 3
+  lr: 0.001
+  max_windows_per_subject: 2000  # cap for memory/time
+
+# Feature importance options (RF)
+feature_importance_top_n: 30
+compute_permutation_importance: false
+feature_importance_sample: 50000

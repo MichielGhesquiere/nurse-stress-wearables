@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy import signal
 from typing import List, Dict
+import logging
 
 class SignalFeatureExtractor:
     """Extract features from physiological signals"""
@@ -10,6 +11,7 @@ class SignalFeatureExtractor:
         self.sampling_rate = sampling_rate
         self.physiological_cols = ['EDA', 'HR', 'TEMP']
         self.movement_cols = ['X', 'Y', 'Z']
+        self.logger = logging.getLogger(__name__)
     
     def extract_rolling_features(self, df: pd.DataFrame, 
                                windows: List[int] = [60, 300]) -> pd.DataFrame:
@@ -44,7 +46,15 @@ class SignalFeatureExtractor:
             df_movement['movement_magnitude'],
             bins=[0, 1, 2, 5, np.inf],
             labels=[0, 1, 2, 3]  # sedentary, light, moderate, vigorous
-        ).astype(int)
+        )
+
+        # Convert categorical to nullable integer and fill missing as 0 (sedentary)
+        try:
+            df_movement['activity_level'] = df_movement['activity_level'].astype('Int64').fillna(0)
+        except Exception:
+            # Fallback: use category codes and replace -1 with 0
+            codes = df_movement['activity_level'].cat.codes.replace(-1, 0)
+            df_movement['activity_level'] = codes.astype('Int64')
         
         return df_movement
     
@@ -65,3 +75,45 @@ class SignalFeatureExtractor:
         ).astype(int)
         
         return df_physio
+
+    def extract_all_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Convenience wrapper that runs all feature extractors and returns a single DataFrame.
+
+        Keeps original `id`, `datetime`, and `label` columns and appends derived features.
+        """
+        if df.empty:
+            return df.copy()
+
+        self.logger.info(f"Extracting features for dataframe with {len(df)} rows")
+
+        # Start from a copy to avoid mutating caller frame
+        base = df.copy()
+
+        # Extract movement and physiological features
+        try:
+            mov = self.extract_movement_features(base)
+            phys = self.extract_physiological_features(base)
+            roll = self.extract_rolling_features(base)
+        except Exception as e:
+            self.logger.error(f"Feature extraction error: {e}")
+            raise
+
+        # Combine features: prefer computed columns from mov/phys/roll, avoid duplicating original cols
+        combined = base[['id', 'datetime', 'label']].copy()
+
+        # Helper to add new columns from a dataframe
+        def _add_new_columns(src_df):
+            for c in src_df.columns:
+                if c in combined.columns:
+                    continue
+                if c in base.columns and c in ['X', 'Y', 'Z', 'EDA', 'HR', 'TEMP']:
+                    # skip raw sensor columns to keep only derived features
+                    continue
+                combined[c] = src_df[c].values
+
+        _add_new_columns(mov)
+        _add_new_columns(phys)
+        _add_new_columns(roll)
+
+        self.logger.info(f"Extracted {len([c for c in combined.columns if c not in ['id','datetime','label']])} feature columns")
+        return combined

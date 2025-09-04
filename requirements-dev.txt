@@ -1,0 +1,7 @@
+pytest>=7.4
+pytest-cov>=4.1
+ruff>=0.5
+black>=24.3
+isort>=5.13
+duckdb>=1.0
+torch==2.3.1; platform_system != 'Windows'  # optional for DL tests; ignored on Windows
