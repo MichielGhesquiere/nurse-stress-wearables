@@ -215,3 +215,95 @@ class StressDetectionTrainer:
         """Save trained model"""
         joblib.dump(self.model, filepath)
         self.logger.info(f"Model saved to {filepath}")
+
+    def train_from_feature_store(self, features_root: str, feature_set: str = "v1") -> Dict:
+        """Train RF directly from cached parquet feature partitions.
+
+        Expects layout: {features_root}/feature_set={feature_set}/id=*/d=*/*.parquet
+        Returns metrics including y_true/y_pred/y_score for plotting.
+        """
+        from pathlib import Path
+        root = Path(features_root) / f"feature_set={feature_set}"
+        files = list(root.glob("id=*/d=*/*.parquet"))
+        if not files:
+            raise RuntimeError(f"No feature files found under {root}")
+
+        self.logger.info(f"Loading cached features: {len(files)} partitions from {root}")
+        X_parts, y_parts = [], []
+        for p in files:
+            try:
+                df = pd.read_parquet(p)
+                if 'label' not in df.columns:
+                    continue
+                feat_cols = [c for c in df.columns if c not in ['id','datetime','label','date']]
+                if not feat_cols:
+                    continue
+                X_parts.append(df[feat_cols].fillna(0))
+                y_parts.append((df['label'] != 0).astype(int))
+            except Exception as e:
+                self.logger.warning(f"Failed reading {p}: {e}")
+
+        if not X_parts:
+            raise RuntimeError("No usable feature partitions loaded.")
+
+        X = pd.concat(X_parts, ignore_index=True)
+        y = pd.concat(y_parts, ignore_index=True)
+        self.logger.info(f"Training RF on cached features: X={X.shape}, pos={int(y.sum())}/{len(y)}")
+
+        # Train
+        self.model.fit(X, y)
+
+        # Evaluate
+        y_pred = self.model.predict(X)
+        y_score = None
+        if hasattr(self.model, 'predict_proba'):
+            try:
+                y_score = self.model.predict_proba(X)[:,1]
+            except Exception:
+                y_score = None
+
+        metrics = {
+            'classification_report': classification_report(y, y_pred),
+            'confusion_matrix': confusion_matrix(y, y_pred).tolist(),
+            'y_true': y.astype(int).to_numpy(),
+            'y_pred': y_pred.astype(int),
+            'y_score': None if y_score is None else np.asarray(y_score, dtype=float),
+            'feature_names': list(X.columns),
+        }
+
+        # Save artifacts
+        results_dir = self.config.get('results_dir')
+        if results_dir:
+            try:
+                from src.utils.plotting import save_classification_report, save_curves
+                out_txt = Path(results_dir) / 'rf_classification_report.txt'
+                out_png = Path(results_dir) / 'rf_confusion_matrix.png'
+                save_classification_report(y, y_pred, str(out_txt), str(out_png))
+                if y_score is not None:
+                    curves_dir = Path(results_dir) / 'curves'
+                    curves_dir.mkdir(parents=True, exist_ok=True)
+                    save_curves(y.astype(int), y_score, str(curves_dir), prefix='rf_')
+            except Exception as e:
+                self.logger.warning(f"Saving RF artifacts failed: {e}")
+
+            # Feature importance (same as in train_by_subjects)
+            try:
+                import matplotlib.pyplot as plt
+                top_n = int(self.config.get('feature_importance_top_n', 30))
+                fi = None
+                if hasattr(self.model, 'feature_importances_'):
+                    fi = pd.Series(self.model.feature_importances_, index=X.columns)
+                if fi is not None:
+                    fi_sorted = fi.sort_values(ascending=False).head(top_n)
+                    fi_df = fi_sorted.reset_index().rename(columns={'index': 'feature', 0: 'importance'})
+                    fi_df.columns = ['feature','importance']
+                    fi_df.to_csv(Path(results_dir)/'rf_feature_importance.csv', index=False)
+                    plt.figure(figsize=(10, max(4, int(top_n*0.4))))
+                    fi_sorted[::-1].plot(kind='barh')
+                    plt.tight_layout()
+                    plt.savefig(Path(results_dir)/'rf_feature_importance.png', dpi=150)
+                    plt.close()
+            except Exception as e:
+                self.logger.warning(f"RF feature importance failed: {e}")
+
+        return metrics

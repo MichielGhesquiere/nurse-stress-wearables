@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
 from sklearn.metrics import roc_auc_score, roc_curve, precision_recall_curve, average_precision_score
+from typing import Tuple
 
 
 def ensure_dir(path: str):
@@ -99,3 +100,28 @@ def save_per_subject_metrics(rows: List[dict], out_csv: str):
     import pandas as pd
     ensure_dir(os.path.dirname(out_csv))
     pd.DataFrame(rows).to_csv(out_csv, index=False)
+
+
+def save_combined_roc(curves: List[Tuple[str, np.ndarray, np.ndarray]], out_png: str, title: str = "ROC Comparison"):
+    """Plot multiple ROC curves on one figure.
+
+    curves: list of (name, y_true, y_score)
+    """
+    plt.figure(figsize=(7, 6))
+    for name, y_true, y_score in curves:
+        if y_score is None:
+            continue
+        fpr, tpr, _ = roc_curve(y_true, y_score)
+        auc = roc_auc_score(y_true, y_score)
+        plt.plot(fpr, tpr, label=f"{name} (AUC={auc:.3f})")
+    plt.plot([0, 1], [0, 1], "k--", alpha=0.4)
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title(title)
+    plt.legend(loc="lower right")
+    plt.tight_layout()
+    ensure_dir(os.path.dirname(out_png))
+    plt.savefig(out_png, dpi=150)
+    plt.close()
